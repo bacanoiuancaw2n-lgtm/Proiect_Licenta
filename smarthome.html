@@ -1,0 +1,957 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0"/>
+<meta name="mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<meta name="theme-color" content="#0f1117"/>
+<title>SmartHome Control</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;600&display=swap');
+
+  :root {
+    --bg:       #0f1117;
+    --surface:  #181c27;
+    --border:   #252a3a;
+    --accent:   #4f8ef7;
+    --accent2:  #2de0a5;
+    --danger:   #f74f4f;
+    --warn:     #f7a94f;
+    --text:     #e4e8f5;
+    --muted:    #6b7494;
+    --mono:     'IBM Plex Mono', monospace;
+    --sans:     'IBM Plex Sans', sans-serif;
+    --radius:   10px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 14px;
+    min-height: 100vh;
+    padding-bottom: 80px;
+  }
+
+  /* ── HEADER ── */
+  header {
+    position: sticky; top: 0; z-index: 100;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 16px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  header h1 {
+    font-family: var(--mono);
+    font-size: 15px; font-weight: 600;
+    letter-spacing: .05em;
+    color: var(--accent);
+  }
+  #conn-badge {
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 20px;
+    background: #1e2235;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    transition: all .3s;
+  }
+  #conn-badge.ok  { color: var(--accent2); border-color: var(--accent2); }
+  #conn-badge.err { color: var(--danger);  border-color: var(--danger);  }
+
+  /* ── TABS ── */
+  nav {
+    position: fixed; bottom: 0; left: 0; right: 0; z-index: 100;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    display: flex;
+  }
+  nav button {
+    flex: 1; background: none; border: none;
+    color: var(--muted); padding: 10px 4px 12px;
+    font-family: var(--sans); font-size: 10px;
+    cursor: pointer; display: flex; flex-direction: column;
+    align-items: center; gap: 3px; transition: color .2s;
+  }
+  nav button svg { width: 20px; height: 20px; }
+  nav button.active { color: var(--accent); }
+  nav button.active svg { filter: drop-shadow(0 0 4px var(--accent)); }
+
+  /* ── SCREENS ── */
+  .screen { display: none; padding: 16px; animation: fadeIn .2s ease; }
+  .screen.active { display: block; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:none; } }
+
+  /* ── CARDS ── */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px;
+    margin-bottom: 12px;
+  }
+  .card-title {
+    font-family: var(--mono);
+    font-size: 11px; font-weight: 600;
+    letter-spacing: .1em; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 12px;
+  }
+
+  /* ── SENSOR GRID ── */
+  .sensor-grid {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .sensor-item {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 10px;
+  }
+  .sensor-label {
+    font-size: 10px; color: var(--muted);
+    font-family: var(--mono); text-transform: uppercase;
+    letter-spacing: .08em; margin-bottom: 4px;
+  }
+  .sensor-value {
+    font-family: var(--mono);
+    font-size: 22px; font-weight: 600;
+    color: var(--text);
+    line-height: 1;
+  }
+  .sensor-unit { font-size: 12px; color: var(--muted); font-weight: 400; }
+  .sensor-item.danger  { border-color: var(--danger); }
+  .sensor-item.danger .sensor-value { color: var(--danger); }
+
+  /* ── STATUS ROW ── */
+  .status-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .status-row:last-child { border-bottom: none; padding-bottom: 0; }
+  .status-key { color: var(--muted); font-size: 13px; }
+  .status-val {
+    font-family: var(--mono); font-size: 13px; font-weight: 600;
+  }
+  .status-val.green { color: var(--accent2); }
+  .status-val.red   { color: var(--danger); }
+  .status-val.warn  { color: var(--warn); }
+
+  /* ── BUTTONS ── */
+  .btn {
+    display: block; width: 100%;
+    padding: 12px; border-radius: var(--radius);
+    border: none; cursor: pointer;
+    font-family: var(--sans); font-size: 14px; font-weight: 600;
+    transition: opacity .15s, transform .1s;
+    margin-bottom: 8px;
+  }
+  .btn:active { transform: scale(.98); opacity: .85; }
+  .btn:last-child { margin-bottom: 0; }
+  .btn-primary  { background: var(--accent);  color: #fff; }
+  .btn-success  { background: var(--accent2); color: #0f1117; }
+  .btn-danger   { background: var(--danger);  color: #fff; }
+  .btn-outline  {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text);
+  }
+  .btn-warn { background: var(--warn); color: #0f1117; }
+  .btn-sm {
+    display: inline-block; width: auto;
+    padding: 8px 14px; font-size: 12px;
+    margin-bottom: 0;
+  }
+
+  /* ── INPUTS ── */
+  input[type=text], textarea {
+    width: 100%; background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px; color: var(--text);
+    font-family: var(--mono); font-size: 13px;
+    padding: 10px 12px; outline: none;
+    transition: border-color .2s;
+  }
+  input[type=text]:focus, textarea:focus { border-color: var(--accent); }
+  textarea { resize: none; min-height: 120px; font-size: 11px; line-height: 1.6; }
+
+  label.form-label {
+    display: block; font-size: 11px;
+    color: var(--muted); margin-bottom: 5px;
+    font-family: var(--mono); letter-spacing: .05em;
+  }
+  .form-group { margin-bottom: 12px; }
+
+  /* ── RGB SLIDERS ── */
+  .rgb-row {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 8px;
+  }
+  .rgb-label {
+    font-family: var(--mono); font-size: 12px; font-weight: 600;
+    width: 14px; text-align: center;
+  }
+  .rgb-label.r { color: #f74f4f; }
+  .rgb-label.g { color: #4ff77a; }
+  .rgb-label.b { color: #4f8ef7; }
+  input[type=range] {
+    flex: 1; -webkit-appearance: none; height: 4px;
+    border-radius: 2px; outline: none; cursor: pointer;
+  }
+  input[type=range].r { background: linear-gradient(to right, #1a0a0a, #f74f4f); }
+  input[type=range].g { background: linear-gradient(to right, #0a1a0d, #4ff77a); }
+  input[type=range].b { background: linear-gradient(to right, #0a0f1a, #4f8ef7); }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 16px; height: 16px;
+    border-radius: 50%; background: #fff;
+    box-shadow: 0 1px 4px rgba(0,0,0,.5);
+  }
+  .rgb-val {
+    font-family: var(--mono); font-size: 12px;
+    width: 28px; text-align: right; color: var(--muted);
+  }
+  #color-preview {
+    width: 100%; height: 44px; border-radius: 8px;
+    margin: 10px 0; border: 1px solid var(--border);
+    transition: background .15s;
+  }
+
+  /* ── TOGGLE ── */
+  .toggle-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 0; border-bottom: 1px solid var(--border);
+  }
+  .toggle-row:last-child { border-bottom: none; }
+  .toggle-label { font-size: 13px; color: var(--text); }
+  .toggle {
+    position: relative; width: 42px; height: 24px;
+  }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .toggle-slider {
+    position: absolute; inset: 0;
+    background: var(--border); border-radius: 12px;
+    cursor: pointer; transition: background .2s;
+  }
+  .toggle-slider:before {
+    content: ''; position: absolute;
+    width: 18px; height: 18px; border-radius: 50%;
+    left: 3px; top: 3px; background: #fff;
+    transition: transform .2s;
+  }
+  .toggle input:checked + .toggle-slider { background: var(--accent2); }
+  .toggle input:checked + .toggle-slider:before { transform: translateX(18px); }
+
+  /* ── LOG ── */
+  #log-area {
+    font-family: var(--mono); font-size: 11px;
+    line-height: 1.7; color: var(--muted);
+  }
+  .log-entry { padding: 3px 0; border-bottom: 1px solid var(--border); }
+  .log-entry:last-child { border-bottom: none; }
+  .log-ts { color: var(--accent); margin-right: 8px; }
+  .log-empty { color: var(--muted); font-style: italic; text-align: center; padding: 20px 0; }
+
+  /* ── ALARM BANNER ── */
+  #alarm-banner {
+    display: none;
+    background: var(--danger); color: #fff;
+    padding: 10px 16px; text-align: center;
+    font-family: var(--mono); font-size: 12px; font-weight: 600;
+    letter-spacing: .05em; animation: pulse 1s infinite;
+  }
+  @keyframes pulse {
+    0%,100% { opacity: 1; } 50% { opacity: .7; }
+  }
+
+  /* ── SETTINGS ── */
+  .settings-row {
+    display: flex; flex-direction: column; gap: 5px;
+    margin-bottom: 12px;
+  }
+
+  /* ── DIVIDER ── */
+  .divider {
+    height: 1px; background: var(--border);
+    margin: 12px 0;
+  }
+
+  /* ── RFID LIST ── */
+  .rfid-item {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 0; border-bottom: 1px solid var(--border);
+  }
+  .rfid-item:last-child { border-bottom: none; }
+  .rfid-uid { font-family: var(--mono); font-size: 12px; color: var(--accent); }
+  .rfid-idx { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+  /* config screen color preview */
+  #cfg-color-preview {
+    width: 100%; height: 36px; border-radius: 8px;
+    margin: 8px 0; border: 1px solid var(--border);
+    transition: background .15s;
+  }
+
+  .chip {
+    display: inline-block; font-family: var(--mono);
+    font-size: 10px; padding: 2px 8px; border-radius: 20px;
+    border: 1px solid var(--border); color: var(--muted);
+    margin-left: 6px;
+  }
+</style>
+</head>
+<body>
+
+<!-- ALARM BANNER -->
+<div id="alarm-banner">⚠ ALARMA ACTIVA ⚠</div>
+
+<!-- HEADER -->
+<header>
+  <h1>// SmartHome</h1>
+  <div id="conn-badge">● Deconectat</div>
+</header>
+
+<!-- SCREEN: DASHBOARD -->
+<div class="screen active" id="screen-dash">
+
+  <div class="card">
+    <div class="card-title">Senzori</div>
+    <div class="sensor-grid">
+      <div class="sensor-item" id="si-temp">
+        <div class="sensor-label">Temperatura</div>
+        <div class="sensor-value" id="sv-temp">--<span class="sensor-unit"> °C</span></div>
+      </div>
+      <div class="sensor-item" id="si-pres">
+        <div class="sensor-label">Presiune</div>
+        <div class="sensor-value" id="sv-pres">--<span class="sensor-unit"> hPa</span></div>
+      </div>
+      <div class="sensor-item" id="si-light">
+        <div class="sensor-label">Lumina</div>
+        <div class="sensor-value" id="sv-light">--<span class="sensor-unit" id="su-day"> zi</span></div>
+      </div>
+      <div class="sensor-item" id="si-gas">
+        <div class="sensor-label">Gaz MQ135</div>
+        <div class="sensor-value" id="sv-gas">--<span class="sensor-unit"> adc</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Stare sistem</div>
+    <div class="status-row">
+      <span class="status-key">Alarma</span>
+      <span class="status-val" id="st-alarm">—</span>
+    </div>
+    <div class="status-row">
+      <span class="status-key">PIR miscare</span>
+      <span class="status-val" id="st-pir">—</span>
+    </div>
+    <div class="status-row">
+      <span class="status-key">Alarma gaz</span>
+      <span class="status-val" id="st-gas">—</span>
+    </div>
+    <div class="status-row">
+      <span class="status-key">Card activ</span>
+      <span class="status-val" id="st-card">—</span>
+    </div>
+    <div class="status-row">
+      <span class="status-key">Mod zi/noapte</span>
+      <span class="status-val" id="st-day">—</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Alarma</div>
+    <button class="btn btn-danger"  onclick="armAlarm(true)">🔴 Armeaza alarma</button>
+    <button class="btn btn-success" onclick="armAlarm(false)">🟢 Dezarmeaza alarma</button>
+  </div>
+
+</div>
+
+<!-- SCREEN: LED -->
+<div class="screen" id="screen-led">
+
+  <div class="card">
+    <div class="card-title">Control LED RGB</div>
+    <div id="color-preview" style="background:rgb(255,255,255)"></div>
+    <div class="rgb-row">
+      <span class="rgb-label r">R</span>
+      <input type="range" class="r" id="sl-r" min="0" max="255" value="255" oninput="updatePreview()">
+      <span class="rgb-val" id="vl-r">255</span>
+    </div>
+    <div class="rgb-row">
+      <span class="rgb-label g">G</span>
+      <input type="range" class="g" id="sl-g" min="0" max="255" value="255" oninput="updatePreview()">
+      <span class="rgb-val" id="vl-g">255</span>
+    </div>
+    <div class="rgb-row">
+      <span class="rgb-label b">B</span>
+      <input type="range" class="b" id="sl-b" min="0" max="255" value="255" oninput="updatePreview()">
+      <span class="rgb-val" id="vl-b">255</span>
+    </div>
+    <div class="divider"></div>
+    <button class="btn btn-primary" onclick="sendColor()">Trimite culoare</button>
+    <button class="btn btn-outline" onclick="sendLedOff()">Stinge LED</button>
+  </div>
+
+  <!-- Presetari rapide -->
+  <div class="card">
+    <div class="card-title">Presetari rapide</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <button class="btn btn-outline" onclick="setPreset(255,255,255)">⬜ Alb</button>
+      <button class="btn btn-outline" onclick="setPreset(255,80,0)">🟠 Portocaliu</button>
+      <button class="btn btn-outline" onclick="setPreset(255,0,0)">🔴 Rosu</button>
+      <button class="btn btn-outline" onclick="setPreset(0,255,80)">🟢 Verde</button>
+      <button class="btn btn-outline" onclick="setPreset(0,100,255)">🔵 Albastru</button>
+      <button class="btn btn-outline" onclick="setPreset(180,0,255)">🟣 Violet</button>
+    </div>
+  </div>
+
+</div>
+
+<!-- SCREEN: RFID -->
+<div class="screen" id="screen-rfid">
+
+  <div class="card">
+    <div class="card-title">Adaugare card nou</div>
+    <p style="color:var(--muted);font-size:13px;margin-bottom:12px;line-height:1.5">
+      Apasa butonul, apoi apropie cardul de cititorul RFID. ESP32 va stoca automat cardul.
+    </p>
+    <button class="btn btn-primary" onclick="addCard()">+ Adauga card nou</button>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Stergere card</div>
+    <div class="form-group">
+      <label class="form-label">UID card (ex: AA:BB:CC:DD)</label>
+      <input type="text" id="del-uid" placeholder="AA:BB:CC:DD" />
+    </div>
+    <button class="btn btn-danger" onclick="deleteCard()">Sterge card</button>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Carduri detectate recent</div>
+    <div id="rfid-list">
+      <div class="log-empty">Niciun card detectat inca</div>
+    </div>
+  </div>
+
+</div>
+
+<!-- SCREEN: CONFIG CARD -->
+<div class="screen" id="screen-cfg">
+
+  <div class="card">
+    <div class="card-title">Configuratie per card</div>
+    <div class="form-group">
+      <label class="form-label">UID card</label>
+      <input type="text" id="cfg-uid" placeholder="AA:BB:CC:DD" />
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="card-title" style="margin-bottom:8px">Culoare LED</div>
+    <div id="cfg-color-preview" style="background:rgb(255,255,255)"></div>
+    <div class="rgb-row">
+      <span class="rgb-label r">R</span>
+      <input type="range" class="r" id="cfg-r" min="0" max="255" value="255" oninput="updateCfgPreview()">
+      <span class="rgb-val" id="cvl-r">255</span>
+    </div>
+    <div class="rgb-row">
+      <span class="rgb-label g">G</span>
+      <input type="range" class="g" id="cfg-g" min="0" max="255" value="255" oninput="updateCfgPreview()">
+      <span class="rgb-val" id="cvl-g">255</span>
+    </div>
+    <div class="rgb-row">
+      <span class="rgb-label b">B</span>
+      <input type="range" class="b" id="cfg-b" min="0" max="255" value="255" oninput="updateCfgPreview()">
+      <span class="rgb-val" id="cvl-b">255</span>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="toggle-row">
+      <span class="toggle-label">LED aprins ziua</span>
+      <label class="toggle">
+        <input type="checkbox" id="cfg-led-day">
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+    <div class="toggle-row">
+      <span class="toggle-label">LED aprins noaptea</span>
+      <label class="toggle">
+        <input type="checkbox" id="cfg-led-night" checked>
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+    <div class="toggle-row">
+      <span class="toggle-label">Buzzer la citire card</span>
+      <label class="toggle">
+        <input type="checkbox" id="cfg-buzzer" checked>
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+
+    <div class="divider"></div>
+    <button class="btn btn-primary" onclick="saveCardConfig()">Salveaza configuratie</button>
+  </div>
+
+</div>
+
+<!-- SCREEN: LOG -->
+<div class="screen" id="screen-log">
+
+  <div class="card">
+    <div class="card-title">Setari conexiune MQTT</div>
+    <div class="form-group">
+      <label class="form-label">Broker Host</label>
+      <input type="text" id="set-host" placeholder="xxxx.s1.eu.hivemq.cloud" />
+    </div>
+    <div class="form-group">
+      <label class="form-label">Port WebSocket</label>
+      <input type="text" id="set-port" value="8884" />
+    </div>
+    <div class="form-group">
+      <label class="form-label">Username</label>
+      <input type="text" id="set-user" placeholder="smarthome" />
+    </div>
+    <div class="form-group">
+      <label class="form-label">Password</label>
+      <input type="text" id="set-pass" placeholder="parola" />
+    </div>
+    <button class="btn btn-primary" onclick="connectMQTT()">Conecteaza</button>
+    <button class="btn btn-outline" onclick="disconnectMQTT()">Deconecteaza</button>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Log evenimente <span class="chip" id="log-count">0</span></div>
+    <button class="btn btn-outline" style="margin-bottom:12px" onclick="requestLog()">Cere log de la ESP32</button>
+    <button class="btn btn-outline" style="margin-bottom:12px" onclick="clearLog()">Sterge log local</button>
+    <div id="log-area"><div class="log-empty">Niciun eveniment inca</div></div>
+  </div>
+
+</div>
+
+<!-- BOTTOM NAV -->
+<nav>
+  <button class="active" onclick="showScreen('dash',this)">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+    Dashboard
+  </button>
+  <button onclick="showScreen('led',this)">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+    LED
+  </button>
+  <button onclick="showScreen('rfid',this)">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg>
+    RFID
+  </button>
+  <button onclick="showScreen('cfg',this)">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>
+    Config
+  </button>
+  <button onclick="showScreen('log',this)">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+    Log/Set
+  </button>
+</nav>
+
+<script>
+// ── MQTT CLIENT ──────────────────────────────────────────────
+let client = null;
+let connected = false;
+
+const TOPICS = {
+  sensors:  'smarthome/sensors',
+  gasAlarm: 'smarthome/alarm/gas',
+  movAlarm: 'smarthome/alarm/motion',
+  rfidNew:  'smarthome/rfid/new',
+  log:      'smarthome/log',
+  status:   'smarthome/status',
+};
+
+// Incarca setari salvate
+function loadSettings() {
+  const s = JSON.parse(localStorage.getItem('mqtt_cfg') || '{}');
+  if (s.host) document.getElementById('set-host').value = s.host;
+  if (s.port) document.getElementById('set-port').value = s.port;
+  if (s.user) document.getElementById('set-user').value = s.user;
+  if (s.pass) document.getElementById('set-pass').value = s.pass;
+}
+
+function saveSettings() {
+  const cfg = {
+    host: document.getElementById('set-host').value.trim(),
+    port: document.getElementById('set-port').value.trim(),
+    user: document.getElementById('set-user').value.trim(),
+    pass: document.getElementById('set-pass').value.trim(),
+  };
+  localStorage.setItem('mqtt_cfg', JSON.stringify(cfg));
+  return cfg;
+}
+
+function connectMQTT() {
+  const cfg = saveSettings();
+  if (!cfg.host) { alert('Introdu adresa brokerului!'); return; }
+
+  setBadge('connecting');
+
+  const clientId = 'SmartHomeWeb_' + Math.random().toString(16).slice(2,8);
+  const useSSL = cfg.port === '8884' || cfg.port === '443';
+
+  client = new Paho.MQTT.Client(cfg.host, parseInt(cfg.port), '/mqtt', clientId);
+
+  client.onConnectionLost = (r) => {
+    connected = false;
+    setBadge('disconnected');
+    addLocalLog('Conexiune pierduta: ' + r.errorMessage);
+    setTimeout(() => { if (!connected) connectMQTT(); }, 5000);
+  };
+
+  client.onMessageArrived = onMessage;
+
+  const opts = {
+    useSSL,
+    timeout: 10,
+    onSuccess: () => {
+      connected = true;
+      setBadge('connected');
+      addLocalLog('Conectat la ' + cfg.host);
+      Object.values(TOPICS).forEach(t => {
+        client.subscribe(t);
+      });
+    },
+    onFailure: (e) => {
+      connected = false;
+      setBadge('error');
+      addLocalLog('Eroare conectare: ' + e.errorMessage);
+    },
+  };
+  if (cfg.user) { opts.userName = cfg.user; opts.password = cfg.pass; }
+
+  try { client.connect(opts); }
+  catch(e) { setBadge('error'); addLocalLog('Exceptie: ' + e); }
+}
+
+function disconnectMQTT() {
+  if (client && connected) { client.disconnect(); }
+  connected = false;
+  setBadge('disconnected');
+}
+
+function publish(topic, payload) {
+  if (!connected) { addLocalLog('Nu esti conectat!'); return; }
+  const msg = new Paho.MQTT.Message(JSON.stringify(payload));
+  msg.destinationName = topic;
+  client.send(msg);
+}
+
+function publishRaw(topic, raw) {
+  if (!connected) { addLocalLog('Nu esti conectat!'); return; }
+  const msg = new Paho.MQTT.Message(raw);
+  msg.destinationName = topic;
+  client.send(msg);
+}
+
+// ── MESAJE PRIMITE ───────────────────────────────────────────
+function onMessage(msg) {
+  const topic   = msg.destinationName;
+  const payload = msg.payloadString;
+  let data = {};
+  try { data = JSON.parse(payload); } catch(e) {}
+
+  if (topic === TOPICS.sensors) {
+    updateSensors(data);
+  } else if (topic === TOPICS.gasAlarm) {
+    handleGasAlarm(data);
+  } else if (topic === TOPICS.movAlarm) {
+    handleMovAlarm(data);
+  } else if (topic === TOPICS.rfidNew) {
+    handleNewCard(data);
+  } else if (topic === TOPICS.log) {
+    handleLog(data);
+  } else if (topic === TOPICS.status) {
+    addLocalLog('Status ESP32: ' + (data.status || payload));
+  }
+}
+
+// ── UPDATE SENZORI ───────────────────────────────────────────
+function updateSensors(d) {
+  setText('sv-temp',  d.temp  !== undefined ? d.temp.toFixed(1)  : '--');
+  setText('sv-pres',  d.pres  !== undefined ? d.pres.toFixed(0)  : '--');
+  setText('sv-light', d.light !== undefined ? d.light            : '--');
+  setText('sv-gas',   d.gas   !== undefined ? d.gas              : '--');
+
+  // Zi/noapte
+  const isDay = d.isDay;
+  document.getElementById('su-day').textContent = isDay ? ' zi' : ' noapte';
+  setText('st-day', isDay ? 'Zi ☀️' : 'Noapte 🌙');
+  setClass('st-day', isDay ? 'green' : '');
+
+  // Alarma armata
+  const armed = d.armed;
+  setText('st-alarm', armed ? 'ARMATA 🔴' : 'DEZARMATA 🟢');
+  setClass('st-alarm', armed ? 'red' : 'green');
+
+  // PIR
+  const pir = d.pir;
+  setText('st-pir', pir ? 'MISCARE! ⚠️' : 'Liniste');
+  setClass('st-pir', pir ? 'warn' : 'green');
+
+  // Alarma gaz
+  const gasA = d.gasAlarm;
+  setText('st-gas', gasA ? 'ALARMA! 🔴' : 'OK');
+  setClass('st-gas', gasA ? 'red' : 'green');
+  document.getElementById('si-gas').classList.toggle('danger', gasA);
+
+  // Banner alarma
+  const anyAlarm = armed && (gasA || d.movAlarm);
+  document.getElementById('alarm-banner').style.display = anyAlarm ? 'block' : 'none';
+}
+
+function handleGasAlarm(d) {
+  if (d.event === 'gas_alarm') {
+    document.getElementById('alarm-banner').style.display = 'block';
+    document.getElementById('alarm-banner').textContent = '⚠ ALARMA GAZ DECLANSATA ⚠';
+    addLocalLog('🔴 ALARMA GAZ! ADC=' + d.adc);
+    if (Notification.permission === 'granted') {
+      new Notification('SmartHome: ALARMA GAZ!', { body: 'Evacuati zona!' });
+    }
+  } else if (d.event === 'gas_clear') {
+    document.getElementById('alarm-banner').style.display = 'none';
+    addLocalLog('✅ Gaz disparut, alarma stinsa');
+  }
+}
+
+function handleMovAlarm(d) {
+  if (d.silent) {
+    addLocalLog('⚠️ Miscare detectata - alarma silentioasa (60s)');
+  } else {
+    document.getElementById('alarm-banner').style.display = 'block';
+    document.getElementById('alarm-banner').textContent = '🚨 ALARMA MISCARE ACTIVA 🚨';
+    addLocalLog('🔴 ALARMA MISCARE ACTIVA!');
+    if (Notification.permission === 'granted') {
+      new Notification('SmartHome: ALARMA!', { body: 'Miscare detectata!' });
+    }
+  }
+}
+
+// ── RFID ─────────────────────────────────────────────────────
+const detectedCards = [];
+
+function handleNewCard(d) {
+  addLocalLog('Card nou adaugat: ' + d.uid);
+  if (d.uid && !detectedCards.find(c => c.uid === d.uid)) {
+    detectedCards.unshift({ uid: d.uid, idx: d.index });
+    renderCardList();
+  }
+  document.getElementById('cfg-uid').value = d.uid || '';
+}
+
+function renderCardList() {
+  const el = document.getElementById('rfid-list');
+  if (!detectedCards.length) {
+    el.innerHTML = '<div class="log-empty">Niciun card detectat inca</div>';
+    return;
+  }
+  el.innerHTML = detectedCards.map(c => `
+    <div class="rfid-item">
+      <div>
+        <div class="rfid-uid">${c.uid}</div>
+        <div class="rfid-idx">Index #${c.idx}</div>
+      </div>
+      <div style="display:flex;gap:6px">
+        <button class="btn btn-outline btn-sm" onclick="prefillDel('${c.uid}')">Del</button>
+        <button class="btn btn-outline btn-sm" onclick="prefillCfg('${c.uid}')">Cfg</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+function prefillDel(uid) {
+  document.getElementById('del-uid').value = uid;
+  showScreen('rfid', document.querySelectorAll('nav button')[2]);
+}
+
+function prefillCfg(uid) {
+  document.getElementById('cfg-uid').value = uid;
+  showScreen('cfg', document.querySelectorAll('nav button')[3]);
+}
+
+// ── LOG ──────────────────────────────────────────────────────
+const logEntries = [];
+
+function handleLog(d) {
+  if (d.log && Array.isArray(d.log)) {
+    d.log.forEach(e => addLocalLog('[ESP] ' + e.msg, e.ts));
+  }
+}
+
+function addLocalLog(msg, ts) {
+  const t = ts ? formatTs(ts) : new Date().toLocaleTimeString('ro-RO');
+  logEntries.unshift({ t, msg });
+  if (logEntries.length > 100) logEntries.pop();
+  renderLog();
+}
+
+function renderLog() {
+  const el = document.getElementById('log-area');
+  document.getElementById('log-count').textContent = logEntries.length;
+  if (!logEntries.length) {
+    el.innerHTML = '<div class="log-empty">Niciun eveniment inca</div>';
+    return;
+  }
+  el.innerHTML = logEntries.map(e =>
+    `<div class="log-entry"><span class="log-ts">${e.t}</span>${e.msg}</div>`
+  ).join('');
+}
+
+function formatTs(ms) {
+  const d = new Date(ms);
+  return d.toLocaleTimeString('ro-RO');
+}
+
+function requestLog() {
+  publishRaw('smarthome/cmd/log', 'request');
+  addLocalLog('Cerere log trimisa la ESP32');
+}
+
+function clearLog() {
+  logEntries.length = 0;
+  renderLog();
+}
+
+// ── COMENZI ──────────────────────────────────────────────────
+function armAlarm(armed) {
+  publish('smarthome/cmd/alarm', { armed });
+  addLocalLog(armed ? 'Comanda: Armare alarma' : 'Comanda: Dezarmare alarma');
+}
+
+function sendColor() {
+  const r = +document.getElementById('sl-r').value;
+  const g = +document.getElementById('sl-g').value;
+  const b = +document.getElementById('sl-b').value;
+  publish('smarthome/cmd/light', { r, g, b });
+  addLocalLog(`Comanda LED: RGB(${r},${g},${b})`);
+}
+
+function sendLedOff() {
+  publish('smarthome/cmd/light', { on: false });
+  addLocalLog('Comanda: LED stins');
+}
+
+function setPreset(r, g, b) {
+  document.getElementById('sl-r').value = r;
+  document.getElementById('sl-g').value = g;
+  document.getElementById('sl-b').value = b;
+  updatePreview();
+  sendColor();
+}
+
+function addCard() {
+  publishRaw('smarthome/cmd/rfid/add', 'add');
+  addLocalLog('Comanda: Astept card nou RFID...');
+}
+
+function deleteCard() {
+  const uid = document.getElementById('del-uid').value.trim().toUpperCase();
+  if (!uid) { alert('Introdu UID-ul cardului!'); return; }
+  publish('smarthome/cmd/rfid/del', { uid });
+  addLocalLog('Comanda: Sterge card ' + uid);
+}
+
+function saveCardConfig() {
+  const uid = document.getElementById('cfg-uid').value.trim().toUpperCase();
+  if (!uid) { alert('Introdu UID-ul cardului!'); return; }
+  const payload = {
+    uid,
+    r:            +document.getElementById('cfg-r').value,
+    g:            +document.getElementById('cfg-g').value,
+    b:            +document.getElementById('cfg-b').value,
+    ledOnDay:     document.getElementById('cfg-led-day').checked,
+    ledOnNight:   document.getElementById('cfg-led-night').checked,
+    buzzerOnRead: document.getElementById('cfg-buzzer').checked,
+  };
+  publish('smarthome/cmd/card/config', payload);
+  addLocalLog('Config card salvat: ' + uid);
+}
+
+// ── UI HELPERS ───────────────────────────────────────────────
+function updatePreview() {
+  const r = document.getElementById('sl-r').value;
+  const g = document.getElementById('sl-g').value;
+  const b = document.getElementById('sl-b').value;
+  document.getElementById('vl-r').textContent = r;
+  document.getElementById('vl-g').textContent = g;
+  document.getElementById('vl-b').textContent = b;
+  document.getElementById('color-preview').style.background = `rgb(${r},${g},${b})`;
+}
+
+function updateCfgPreview() {
+  const r = document.getElementById('cfg-r').value;
+  const g = document.getElementById('cfg-g').value;
+  const b = document.getElementById('cfg-b').value;
+  document.getElementById('cvl-r').textContent = r;
+  document.getElementById('cvl-g').textContent = g;
+  document.getElementById('cvl-b').textContent = b;
+  document.getElementById('cfg-color-preview').style.background = `rgb(${r},${g},${b})`;
+}
+
+function setText(id, val) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const spans = el.querySelectorAll('span');
+  el.childNodes.forEach(n => { if (n.nodeType === 3) n.textContent = val; });
+  if (!el.childNodes.length || (el.childNodes.length === 1 && el.childNodes[0].nodeType !== 3)) {
+    el.textContent = val;
+    spans.forEach(s => el.appendChild(s));
+  }
+}
+
+function setClass(id, cls) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.className = 'status-val' + (cls ? ' ' + cls : '');
+}
+
+function setBadge(state) {
+  const b = document.getElementById('conn-badge');
+  b.className = '';
+  if (state === 'connected')   { b.textContent = '● Conectat';    b.className = 'ok'; }
+  else if (state === 'error')  { b.textContent = '● Eroare';      b.className = 'err'; }
+  else if (state === 'connecting') { b.textContent = '● Conectare...'; }
+  else                         { b.textContent = '● Deconectat'; }
+}
+
+function showScreen(name, btn) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+  document.getElementById('screen-' + name).classList.add('active');
+  btn.classList.add('active');
+}
+
+// ── NOTIFICARI PUSH ──────────────────────────────────────────
+if ('Notification' in window && Notification.permission === 'default') {
+  Notification.requestPermission();
+}
+
+// ── INIT ─────────────────────────────────────────────────────
+loadSettings();
+renderLog();
+renderCardList();
+updatePreview();
+updateCfgPreview();
+
+const saved = JSON.parse(localStorage.getItem('mqtt_cfg') || '{}');
+if (saved.host) {
+  setTimeout(connectMQTT, 800);
+}
+</script>
+</body>
+</html>
