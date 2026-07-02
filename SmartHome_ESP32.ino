@@ -1,8 +1,3 @@
-/*
- * ============================================================
- *  SmartHome ESP32 - Sistem de alarma si control inteligent
- * ============================================================
- */
 
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
@@ -10,20 +5,20 @@
 #include <Wire.h>
 #include <SPI.h>
 #include <MFRC522.h>
-#include <Adafruit_BMP085.h>
+#include <Adafruit_BMP280.h>
 #include <LiquidCrystal.h>    
 #include <ArduinoJson.h>
 #include <Preferences.h>
 
 // ============================================================
-//  CONFIGURARE
+//  CONFIGURARE 
 // ============================================================
-const char* WIFI_SSID      = "DIGI-mgY9";
-const char* WIFI_PASSWORD  = "cUExzTcFn4";
+const char* WIFI_SSID      = "S25anca";
+const char* WIFI_PASSWORD  = "244466666";
 const char* MQTT_SERVER    = "79a26acab6f94e7598b50404d7846773.s1.eu.hivemq.cloud";
 const int   MQTT_PORT      = 8883;
 const char* MQTT_USER      = "appESP";   
-const char* MQTT_PASS      = "appESP32";
+const char* MQTT_PASS      = "appESP123";
 const char* MQTT_CLIENT_ID = "79a26acab6f94e7598b50404d7846773.s1.eu.hivemq.cloud";
 
 // ============================================================
@@ -83,12 +78,12 @@ const char* MQTT_CLIENT_ID = "79a26acab6f94e7598b50404d7846773.s1.eu.hivemq.clou
 #define CARD_UID_LEN      4
 #define NVM_NS           "smarthome"
 
-#define SENSOR_INTERVAL  10000UL   // ms intre citiri
-#define LIGHT_THRESHOLD    512     // ADC sub = noapte 
-#define GAS_THRESHOLD      1750     // ADC peste = alarma
-#define GAS_CLEAR_THRESH   1200     // ADC sub = gaz a disparut
-#define MOTION_SILENT_MS 60000UL   // 60s alarma silentioasa
-#define LCD_SCROLL_MS     3000UL   // interval rotatie ecrane
+#define SENSOR_INTERVAL  10000UL   
+#define LIGHT_THRESHOLD    631     
+#define GAS_THRESHOLD      1750     
+#define GAS_CLEAR_THRESH   1200     
+#define MOTION_SILENT_MS 60000UL   
+#define LCD_SCROLL_MS     3000UL   
 
 // ============================================================
 //  OBIECTE
@@ -96,7 +91,7 @@ const char* MQTT_CLIENT_ID = "79a26acab6f94e7598b50404d7846773.s1.eu.hivemq.clou
 WiFiClientSecure wifiClient;
 PubSubClient     mqtt(wifiClient);
 MFRC522          rfid(PIN_RFID_SS, PIN_RFID_RST);
-Adafruit_BMP085  bmp;
+Adafruit_BMP280 bmp;
 // LiquidCrystal(RS, EN, D4, D5, D6, D7)
 LiquidCrystal    lcd(PIN_LCD_RS, PIN_LCD_EN,
                      PIN_LCD_D4, PIN_LCD_D5, PIN_LCD_D6, PIN_LCD_D7);
@@ -162,7 +157,7 @@ struct Sys {
 } S;
 
 // ============================================================
-//  LOG
+//  LOG CIRCULAR
 // ============================================================
 #define LOG_N  50
 #define LOG_L  64
@@ -184,6 +179,7 @@ void handleBuzNB();
 void handleLCD();
 void handleRFID();
 void handleButton();
+void handlePIR();
 void setLED(uint8_t r, uint8_t g, uint8_t b);
 void applyCardLED(int idx);
 void buzStart(unsigned long per);
@@ -221,16 +217,21 @@ void setup() {
   lcd.begin(16, 2);
   lcdP("SmartHome v2.0", "Initializing...");
 
-  // I2C -> BMP180
+  //I2C -> BMP180
   Wire.begin(21, 22);
-  if (!bmp.begin()) {
+  if (!bmp.begin(0x76)) {
     Serial.println(F("[WARN] BMP180 negasit!"));
     lcdOvr("Eroare BMP180!", "Verif SDA/SCL", 3000);
   } else {
     Serial.println(F("[OK] BMP180"));
+    bmp.setSampling(Adafruit_BMP280::MODE_NORMAL,
+                Adafruit_BMP280::SAMPLING_X2,
+                Adafruit_BMP280::SAMPLING_X16,
+                Adafruit_BMP280::FILTER_X16,
+                Adafruit_BMP280::STANDBY_MS_500);
   }
 
-  // SPI -> RFID
+    // SPI -> RFID
   SPI.begin(18, 19, 23, PIN_RFID_SS);
   rfid.PCD_Init();
   delay(50);
@@ -271,6 +272,7 @@ void loop() {
   handleLED();
   handleBuzNB();
   handleLCD();
+  handlePIR();
 }
 
 // ============================================================
@@ -280,7 +282,7 @@ void setupWiFi() {
   lcdP("Conectare WiFi:", WIFI_SSID);
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  wifiClient.setInsecure();
+  wifiClient.setInsecure(); 
   int t = 0;
   while (WiFi.status() != WL_CONNECTED && t++ < 40) {
     delay(500); Serial.print('.');
@@ -338,7 +340,6 @@ void mqttCb(char* topic, byte* payload, unsigned int len) {
   StaticJsonDocument<512> doc;
   bool ok = !deserializeJson(doc, raw);
 
-  // CMD LIGHT: {"r":255,"g":0,"b":0} sau {"on":false}
   if (!strcmp(topic, TOPIC_CMD_LIGHT) && ok) {
     if (doc.containsKey("r")) {
       S.ledR = (uint8_t)(int)doc["r"];
@@ -352,14 +353,12 @@ void mqttCb(char* topic, byte* payload, unsigned int len) {
     addLog("CMD: light");
   }
 
-  // CMD SCREEN: {"line1":"...","line2":"...","duration":5000}
   else if (!strcmp(topic, TOPIC_CMD_SCREEN) && ok) {
     lcdOvr(doc["line1"] | "SmartHome",
            doc["line2"] | "",
            (unsigned long)(int)(doc["duration"] | 5000));
   }
 
-  // CMD RFID ADD
   else if (!strcmp(topic, TOPIC_CMD_RFID_ADD)) {
     S.waitCard    = true;
     S.waitCardExp = millis() + 30000UL;
@@ -367,7 +366,6 @@ void mqttCb(char* topic, byte* payload, unsigned int len) {
     addLog("Astept card nou");
   }
 
-  // CMD RFID DEL
   else if (!strcmp(topic, TOPIC_CMD_RFID_DEL) && ok && doc.containsKey("uid")) {
     String uid = doc["uid"].as<String>(); uid.toUpperCase();
     for (int i = 0; i < cardCount; i++) {
@@ -384,7 +382,6 @@ void mqttCb(char* topic, byte* payload, unsigned int len) {
     }
   }
 
-  // CMD ALARM
   else if (!strcmp(topic, TOPIC_CMD_ALARM) && ok && doc.containsKey("armed")) {
     S.alarmArmed = (bool)doc["armed"];
     if (!S.alarmArmed) {
@@ -395,12 +392,10 @@ void mqttCb(char* topic, byte* payload, unsigned int len) {
     lcdOvr(S.alarmArmed ? "Alarma: ARMATA" : "Alarma: Dezarm.", "", 2000);
   }
 
-  // CMD LOG REQ
   else if (!strcmp(topic, TOPIC_CMD_LOG_REQ)) {
     sendLog();
   }
 
-  // CMD CARD CONFIG
   else if (!strcmp(topic, TOPIC_CMD_CARD_CFG) && ok &&
            doc.containsKey("uid") && doc.containsKey("r")) {
     String uid = doc["uid"].as<String>(); uid.toUpperCase();
@@ -508,7 +503,7 @@ void handleAlarms() {
 void handleLED() {
   unsigned long now = millis();
 
-  // P1: GAZ (700ms)
+  // P1: GAZ 
   if (S.alarmGas) {
     if (now - S.blinkLast >= 700) { S.blinkLast=now; S.lcdBlink=!S.lcdBlink; }
     setLED(S.lcdBlink ? 120 : 0, 0, 0);
@@ -523,7 +518,7 @@ void handleLED() {
   // P3: Silent 
   // P4: Override manual MQTT
   if (S.ledManual) { setLED(S.ledR, S.ledG, S.ledB); return; }
-  // P5: Card activ 
+  // P5: Card activ cu setari proprii
   if (S.cardIdx >= 0 && S.cardIdx < cardCount) { applyCardLED(S.cardIdx); return; }
   // P6: Default zi/noapte
   setLED(S.isDay ? 0 : 255, S.isDay ? 0 : 255, S.isDay ? 0 : 255);
@@ -594,7 +589,6 @@ void handleLCD() {
     S.lcdOvr = false; lcd.clear();
   }
 
-  // ALARMA GAZ
   if (S.alarmGas) {
     if (now - S.lcdLast >= 700) {
       S.lcdLast = now; S.lcdBlink = !S.lcdBlink;
@@ -617,7 +611,7 @@ void handleLCD() {
     return;
   }
 
-  // ALARMA SILENTIOASA
+  // ALARMA SILENTIOASA - countdown
   if (S.alarmMovSilent) {
     if (now - S.lcdLast >= 1000) {
       S.lcdLast = now;
@@ -674,6 +668,7 @@ void handleRFID() {
   String   us  = uidS(uid, CARD_UID_LEN);
   Serial.printf("[RFID] Card: %s\n", us.c_str());
 
+  
   if (S.waitCard) {
     S.waitCard = false;
     if (findCard(uid) >= 0) {
@@ -701,14 +696,12 @@ void handleRFID() {
     return;
   }
 
-  // === VALIDARE ACCES ===
   int idx = findCard(uid);
   if (idx >= 0) {
     S.cardIdx = idx;
     RFIDCard& c = cards[idx];
     bool wasArmed = S.alarmArmed;
 
-    // Dezarmare
     S.alarmArmed = S.alarmMovSilent = S.alarmMovActive = false;
     if (wasArmed) buzStop();
 
@@ -737,6 +730,23 @@ void handleRFID() {
 
   rfid.PICC_HaltA(); rfid.PCD_StopCrypto1();
 }
+
+  // === PIR ===
+  void handlePIR() {
+    bool cur = digitalRead(PIN_PIR);
+    if (cur && !S.pirPrev) {
+      if (S.alarmArmed && !S.alarmGas && 
+          !S.alarmMovSilent && !S.alarmMovActive) {
+        S.alarmMovSilent = true;
+        S.movSilentStart = millis();
+        addLog("Miscare: alarma silentioasa");
+        StaticJsonDocument<96> d; d["event"]="motion"; d["silent"]=true;
+        char b[96]; serializeJson(d,b); mqtt.publish(TOPIC_ALARM_MOTION, b);
+      }
+    }
+    S.pirPrev = cur;
+    S.pir = cur;
+  }
 
 // ============================================================
 //  BUTTON
